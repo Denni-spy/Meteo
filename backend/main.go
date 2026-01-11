@@ -39,16 +39,72 @@ type Station struct {
 	Distance  float64  `json:"distance,omitempty"`
 }
 
-func loadStations(latUsr float64, longUsr float64, radius int, limit int) ([]*Station, error) {
-	var stations []*Station
+type StationInventory struct {
+	FirstYear int
+	LastYear  int
+}
 
-	file, err := os.Open("data/ghcnd-stations.txt")
+var inventoryMap = make(map[string]*StationInventory)
+
+func loadInventory() error {
+	file, err := os.Open("data/ghcnd-inventory.txt")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) < 45 {
+			continue
+		}
+
+		element := strings.TrimSpace(line[31:35])
+		if element != "TMAX" && element != "TMIN" {
+			continue
+		}
+
+		id := strings.TrimSpace(line[0:11])
+		firstYear, _ := strconv.Atoi(strings.TrimSpace(line[36:40]))
+		lastYear, _ := strconv.Atoi(strings.TrimSpace(line[41:45]))
+
+		if inv, exists := inventoryMap[id]; exists {
+			if firstYear < inv.FirstYear {
+				inv.FirstYear = firstYear
+			}
+			if lastYear > inv.LastYear {
+				inv.LastYear = lastYear
+			}
+		} else {
+			inventoryMap[id] = &StationInventory{FirstYear: firstYear, LastYear: lastYear}
+		}
+	}
+	return nil
+}
+
+func loadStations(latUsr float64, longUsr float64, radius int, limit int, startYear int, endYear int) ([]*Station, error) {
+	var stations []*Station
+
+	url := "https://noaa-ghcn-pds.s3.amazonaws.com/ghcnd-stations.txt"
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("Netzwerkfehler: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Datei %s nicht gefunden (Status %d)", url, resp.StatusCode)
+	}
+	/*
+		file, err := os.Open("data/ghcnd-stations.txt")
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+	*/
+	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(line) < 71 {
@@ -80,17 +136,24 @@ func loadStations(latUsr float64, longUsr float64, radius int, limit int) ([]*St
 		// calculate distance
 		distance := earthRadius * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 
-		// append station to list
-		if distance <= float64(radius) {
-			s := &Station{
-				ID:        id,
-				Name:      name,
-				Latitude:  &lat,
-				Longitude: &long,
-				Distance:  distance,
-			}
-			stations = append(stations, s)
+		if distance > float64(radius) {
+			continue
 		}
+
+		inv, exists := inventoryMap[id]
+
+		if !exists || inv.FirstYear > startYear || inv.LastYear < endYear {
+			continue
+		}
+
+		s := &Station{
+			ID:        id,
+			Name:      name,
+			Latitude:  &lat,
+			Longitude: &long,
+			Distance:  distance,
+		}
+		stations = append(stations, s)
 	}
 
 	slices.SortFunc(stations, func(a, b *Station) int {
@@ -195,14 +258,14 @@ func stationsHandler(w http.ResponseWriter, r *http.Request) {
 		enc.Encode(response)
 		return
 	}
-	_, err = strconv.Atoi(startDateStr)
+	start, err := strconv.Atoi(startDateStr)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		response := Response{Data: []*Station{}, ErrorMsg: "Bitte geben Sie eine gültige Zahl an"}
 		enc.Encode(response)
 		return
 	}
-	_, err = strconv.Atoi(endDateStr)
+	end, err := strconv.Atoi(endDateStr)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		response := Response{Data: []*Station{}, ErrorMsg: "Bitte geben Sie eine gültige Zahl an"}
@@ -210,21 +273,27 @@ func stationsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stationList, _ := loadStations(lat, long, radius, limit)
+	stationList, _ := loadStations(lat, long, radius, limit, start, end)
 	response := Response{Data: stationList, ErrorMsg: ""}
 	enc.Encode(response)
 }
 
-func loadStationData(_ string) ([]*StationData, error) {
-	file, err := os.Open("data/GME00102380.csv")
+func loadStationData(id string) ([]*StationData, error) {
+	// folder with data for each weatherstation
+	url := fmt.Sprintf("https://noaa-ghcn-pds.s3.amazonaws.com/csv/by_station/%s.csv", id)
+
+	resp, err := http.Get(url)
 	if err != nil {
-		return []*StationData{}, err
+		return nil, fmt.Errorf("Netzwerkfehler: %v", err)
 	}
-	defer file.Close()
+	defer resp.Body.Close()
 
-	reader := csv.NewReader(file)
-
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Station %s nicht gefunden (Status %d)", id, resp.StatusCode)
+	}
+	reader := csv.NewReader(resp.Body)
 	var dataList []*StationData
+
 	_, _ = reader.Read()
 
 	const layout = "20060102"
@@ -235,26 +304,15 @@ func loadStationData(_ string) ([]*StationData, error) {
 			break
 		}
 		if err != nil {
-			return []*StationData{}, err
+			return nil, err
 		}
-		dateStr := line[1]
-		valueStr := line[3]
-		date, err := time.Parse(layout, dateStr)
-		if err != nil {
-			return []*StationData{}, err
-		}
-		// string to int
-		value, err := strconv.Atoi(valueStr)
-		if err != nil {
-			return []*StationData{}, err
-		}
+		date, _ := time.Parse(layout, line[1])
+		value, _ := strconv.Atoi(line[3])
 
-		// add data to list
-		data := &StationData{
+		dataList = append(dataList, &StationData{
 			Date:      date,
 			DataValue: value,
-		}
-		dataList = append(dataList, data)
+		})
 	}
 	return dataList, nil
 }
@@ -320,9 +378,14 @@ func stationHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	err := loadInventory()
+	if err != nil {
+		// file for rough filtering
+		fmt.Printf("Fehler beim Laden des Inventars: %v\n", err)
+		return
+	}
 	http.HandleFunc("/status", statusHandler)
 	fmt.Println("Starting server on :8080")
-	fmt.Println("Lade Stationsdaten")
 	http.HandleFunc("/stations", stationsHandler)
 	http.HandleFunc("/station", stationHandler)
 	http.ListenAndServe(":8080", nil)
