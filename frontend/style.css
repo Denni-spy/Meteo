@@ -2,16 +2,39 @@
     --primary-color: #2563eb;
     --bg-color: #f8fafc;
     --text-color: #1e293b;
-    --card-bg: #ffffff;
+    --card-bg: #D9D9D9;
     --border-color: #e2e8f0;
+    --form-bg: #EEEEEE;
+    --title-color: #919FC5;
+    --line-color: #2756A3;
 }
 
+
 body {
+    display: flex;
+    flex-direction: column;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background-color: var(--bg-color);
     color: var(--text-color);
     margin: 0;
     padding: 40px;
+    min-width: calc(100vw - 80px);
+    min-height: calc(100vh - 80px);
+    gap: 64px;
+}
+
+.title {
+    color: var(--title-color);
+    font-size: 128px;
+    font-weight: bold;
+    margin: 0;
+    filter: url(#inner-shadow);
+}
+
+.line {
+    min-width: 90vw;
+    height: 3px;
+    background: var(--line-color);
 }
 
 .layout-wrapper {
@@ -20,10 +43,18 @@ body {
     gap: 30px;
     background: var(--card-bg);
     padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    max-width: 1200px;
-    margin: 0 auto;
+    border-radius: 25px;
+    max-width: 90vw;
+    flex: 1 0 0;
+}
+
+.form-wrapper {
+    display: flex;
+    flex-direction: column;
+    background: var(--form-bg);
+    border-radius: 10px;
+    flex: 1 0 0;
+    max-width: 20%;
 }
 
 .input-group {
@@ -58,7 +89,7 @@ input[type="number"] {
 }
 
 #submitBtn:hover {
-    background-color: #1d4ed8; 
+    background-color: #1d4ed8;
 }
 
 
@@ -66,5 +97,83 @@ input[type="number"] {
     border-radius: 8px;
     border: 1px solid var(--border-color);
     min-height: 400px;
-    flex: 1; 
+    flex: 1 0 0;
+    max-width: 80%;
+}
+
+#meteoForm {
+    padding: 20px;
+}
+
+/* The switch - the box around the slider */
+.dark-mode {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+}
+
+/* Hide default HTML checkbox */
+.dark-mode input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+/* The slider */
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    -webkit-transition: .4s;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    -webkit-transition: .4s;
+    transition: .4s;
+}
+
+input:checked+.slider {
+    background-color: #2196F3;
+}
+
+input:focus+.slider {
+    box-shadow: 0 0 1px #2196F3;
+}
+
+input:checked+.slider:before {
+    -webkit-transform: translateX(26px);
+    -ms-transform: translateX(26px);
+    transform: translateX(26px);
+}
+
+/* Rounded sliders */
+.slider.round {
+    border-radius: 34px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+
+.dark-mode-wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
 }
