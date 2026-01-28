@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,13 +46,19 @@ type StationInventory struct {
 var inventoryMap = make(map[string]*StationInventory)
 
 func loadInventory() error {
-	file, err := os.Open("data/ghcnd-inventory.txt")
-	if err != nil {
-		return err
-	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	url := "https://noaa-ghcn-pds.s3.amazonaws.com/ghcnd-inventory.txt"
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("Netzwerkfehler: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Datei %s nicht gefunden (Status %d)", url, resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(line) < 45 {
@@ -97,13 +102,7 @@ func loadStations(latUsr float64, longUsr float64, radius int, limit int, startY
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Datei %s nicht gefunden (Status %d)", url, resp.StatusCode)
 	}
-	/*
-		file, err := os.Open("data/ghcnd-stations.txt")
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-	*/
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -125,8 +124,8 @@ func loadStations(latUsr float64, longUsr float64, radius int, limit int, startY
 		const p = math.Pi / 180
 
 		// calculate deltas
-		dLat := (lat - latUsr) * p
-		dLong := (long - longUsr) * p
+		dLat := (latUsr - lat) * p
+		dLong := (longUsr - long) * p
 
 		// Haversine formula
 		a := math.Sin(dLat/2)*math.Sin(dLat/2) +
@@ -135,6 +134,10 @@ func loadStations(latUsr float64, longUsr float64, radius int, limit int, startY
 
 		// calculate distance
 		distance := earthRadius * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+		if id == "AE000041196" {
+			fmt.Printf("lat: %f long: %f name: %s distance: %f \n", lat, long, name, distance)
+		}
 
 		if distance > float64(radius) {
 			continue
@@ -276,6 +279,9 @@ func stationsHandler(w http.ResponseWriter, r *http.Request) {
 	stationList, _ := loadStations(lat, long, radius, limit, start, end)
 	response := Response{Data: stationList, ErrorMsg: ""}
 	enc.Encode(response)
+
+	fmt.Printf("long: %f, lat: %f, start:%d, end:%d, map:%d, station:%+v", long, lat, start, end, len(inventoryMap), inventoryMap["AE000041196"])
+
 }
 
 func loadStationData(id string) ([]*StationData, error) {
@@ -317,21 +323,21 @@ func loadStationData(id string) ([]*StationData, error) {
 	return dataList, nil
 }
 
-func calculateAvgTemp(tempData []*StationData) []*MonthlyStationData {
+func calculateAvgTemp(stationDataList []*StationData) []*MonthlyStationData {
 	type stats struct {
 		sum   int
 		count int
 	}
 	// "1850-12" -> stats
 	monthlyStats := make(map[string]*stats)
-	for _, x := range tempData {
-		key := x.Date.Format("2006-01")
+	for _, el := range stationDataList {
+		key := el.Date.Format("2006-01")
 		_, ok := monthlyStats[key]
 		if !ok {
 			monthlyStats[key] = &stats{}
 		}
 		monthlyStats[key].count++
-		monthlyStats[key].sum += x.DataValue
+		monthlyStats[key].sum += el.DataValue
 	}
 	avgTemp := []*MonthlyStationData{}
 	for k, v := range monthlyStats {
