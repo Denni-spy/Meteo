@@ -1,0 +1,21 @@
+# STAGE 1: Build the binary
+FROM golang:1.26-alpine AS builder
+# Set the working directory inside the container
+WORKDIR /app
+# copy files
+COPY . .
+# Build the application
+# CGO_ENABLED=0 ensures a statically linked binary (runs anywhere)
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+# STAGE 2: Run the binary
+FROM alpine:latest
+# Security: Add a non-root user to run the app
+RUN adduser -D appuser
+USER appuser
+WORKDIR /root/
+# Copy only the compiled binary from the builder stage
+COPY --from=builder /app/main .
+# Expose the port your app runs on
+EXPOSE 8080
+# Run the binary
+CMD ["./main"]

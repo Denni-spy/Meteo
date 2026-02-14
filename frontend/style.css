@@ -46,6 +46,7 @@ body {
     border-radius: 25px;
     max-width: 90vw;
     flex: 1 0 0;
+    position: relative;
 }
 
 .form-wrapper {
@@ -184,15 +185,71 @@ input:checked+.slider:before {
 .sun-loader {
     width: 50px;
     height: 50px;
-    border: 4px solid rgba(255, 165, 0, 0.2); /* Faint orange ring */
-    border-top: 4px solid #FF8C00; /* Dark orange active part */
-    border-right: 4px solid #FFD700; /* Gold active part */
+    border: 4px solid rgba(255, 165, 0, 0.2);
+    /* Faint orange ring */
+    border-top: 4px solid #FF8C00;
+    /* Dark orange active part */
+    border-right: 4px solid #FFD700;
+    /* Gold active part */
     border-radius: 50%;
     animation: sun-spin 1s linear infinite;
-    box-shadow: 0 0 15px #FFD700; /* Glowing sun effect */
+    box-shadow: 0 0 15px #FFD700;
+    /* Glowing sun effect */
+    position: absolute;
+    left: calc(50% - 25px);
+    top: calc(50% - 25px);
 }
 
 @keyframes sun-spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.controls-wrapper {
+    display: flex;
+    flex-direction: row;
+}
+
+.column {
+    flex-direction: column;
+    position: relative;
+}
+
+.view-toggles {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#btn-back {
+    position: absolute;
+}
+
+#meteo-table {
+    width: 100%;
+}
+
+#meteo-table,
+th,
+td {
+    background-color: var(--form-bg);
+    border: 1px solid black;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    table-layout: fixed;
+}
+
+.active {
+    background-color: green;
+}
+
+.hidden {
+    display: none !important;
 }

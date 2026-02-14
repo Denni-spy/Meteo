@@ -21,12 +21,12 @@ form.addEventListener('submit', function (event) {
 
     //reading user input
     const lat = parseFloat(document.getElementById('latitude').value);
-    const long = parseFloat(document.getElementById('longitude').value); 
+    const long = parseFloat(document.getElementById('longitude').value);
     const radKm = parseInt(document.getElementById('radius').value);
     const limit = parseInt(document.getElementById('selection').value);
-    const start = parseInt(document.getElementById('start').value);      
-    const end = parseInt(document.getElementById('end').value);          
-  
+    const start = parseInt(document.getElementById('start').value);
+    const end = parseInt(document.getElementById('end').value);
+
 
     //validating user input
     if (isNaN(lat) || isNaN(long) || isNaN(radKm) || isNaN(start) || isNaN(end) || isNaN(limit)) {
@@ -75,7 +75,7 @@ form.addEventListener('submit', function (event) {
 
     map.fitBounds(aktuellerKreis.getBounds());
 
-    aktuellerMarker = L.marker([lat, long], {icon: redIcon})
+    aktuellerMarker = L.marker([lat, long], { icon: redIcon })
         .addTo(map)
         .openPopup();
 
@@ -92,7 +92,7 @@ form.addEventListener('submit', function (event) {
             }
 
             const stationen = result.data;
-         
+
             if (!stationen || stationen.length === 0) {
                 alert("No stations found in this area.");
                 return;
@@ -100,7 +100,7 @@ form.addEventListener('submit', function (event) {
 
             stationen.forEach(station => {
                 if (station.latitude && station.longitude) {
-                    
+
                     const marker = L.marker([station.latitude, station.longitude])
                         .addTo(map)
                         .bindPopup(`
@@ -108,7 +108,7 @@ form.addEventListener('submit', function (event) {
                             ID: ${station.id}<br>
                             Distance: ${Math.round(station.distance)} km
                         `)
-                    .on("click", () => window.location.href = `detailview.html?id=${station.id}`);
+                        .on("click", () => window.location.href = `detailview.html?id=${station.id}`);
                     stationMarkers.push(marker);
                 }
             });

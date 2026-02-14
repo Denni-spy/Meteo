@@ -435,10 +435,10 @@ func calculateSeasonalAvg(rawData []RawStationData) []*SeasonalStationData {
 			season = "Summer"
 		case time.September, time.October, time.November:
 			season = "Autumn"
-		case time.December:
-			season = "Winter"
-			year = year + 1
-		case time.January, time.February:
+			/*	case time.December:
+				season = "Winter"
+				year = year + 1  */
+		case time.January, time.February, time.December:
 			season = "Winter"
 		default:
 			continue
