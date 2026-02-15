@@ -258,6 +258,38 @@ func findStations(latUsr float64, longUsr float64, radius int, limit int, startY
 	return limStations, nil
 }
 
+// countStationsInRadius counts how many stations exist within the given radius,
+// ignoring the year filter. Used to distinguish "no stations nearby" from
+// "stations nearby but none with data in the requested year range".
+func countStationsInRadius(latUsr float64, longUsr float64, radius int) int {
+	count := 0
+	const earthRadius = 6371.0
+	const p = math.Pi / 180
+
+	for _, s := range allStations {
+		if s.Latitude == nil || s.Longitude == nil {
+			continue
+		}
+
+		lat := *s.Latitude
+		long := *s.Longitude
+
+		dLat := (latUsr - lat) * p
+		dLong := (longUsr - long) * p
+
+		a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+			math.Cos(latUsr*p)*math.Cos(lat*p)*
+				math.Sin(dLong/2)*math.Sin(dLong/2)
+
+		distance := earthRadius * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+		if distance <= float64(radius) {
+			count++
+		}
+	}
+	return count
+}
+
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "OK")
@@ -360,7 +392,20 @@ func stationsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stationList, _ := findStations(lat, long, radius, limit, start, end)
-	response := Response{Data: stationList, ErrorMsg: ""}
+
+	// If no stations matched, check if there are stations in the radius at all
+	// to give the user a more helpful error message.
+	errMsg := ""
+	if len(stationList) == 0 {
+		geoCount := countStationsInRadius(lat, long, radius)
+		if geoCount > 0 {
+			errMsg = fmt.Sprintf("There are %d stations within the radius, but none have data for the selected time range (%d–%d). Try adjusting the start/end year.", geoCount, start, end)
+		} else {
+			errMsg = "No stations found in this area. Try increasing the radius."
+		}
+	}
+
+	response := Response{Data: stationList, ErrorMsg: errMsg}
 	enc.Encode(response)
 }
 

@@ -1381,3 +1381,121 @@ func TestFindStations_EqualDistanceSorting(t *testing.T) {
 			result[0].Distance, result[1].Distance)
 	}
 }
+
+// ─── countStationsInRadius Tests ───────────────────────────────────────────────
+
+func TestCountStationsInRadius_NoStationsNearby(t *testing.T) {
+	lat, long := 0.0, 0.0
+	setupGlobalState(t,
+		[]*Station{
+			{ID: "STN001", Name: "Far Away", Latitude: &lat, Longitude: &long},
+		},
+		map[string]*StationInventory{},
+	)
+
+	count := countStationsInRadius(52.52, 13.405, 10)
+	if count != 0 {
+		t.Errorf("expected 0 stations in radius, got %d", count)
+	}
+}
+
+func TestCountStationsInRadius_StationsNearby(t *testing.T) {
+	lat1, long1 := 52.52, 13.405
+	lat2, long2 := 52.53, 13.41
+	lat3, long3 := 0.0, 0.0
+	setupGlobalState(t,
+		[]*Station{
+			{ID: "STN001", Name: "Berlin 1", Latitude: &lat1, Longitude: &long1},
+			{ID: "STN002", Name: "Berlin 2", Latitude: &lat2, Longitude: &long2},
+			{ID: "STN003", Name: "Far Away", Latitude: &lat3, Longitude: &long3},
+		},
+		map[string]*StationInventory{},
+	)
+
+	count := countStationsInRadius(52.52, 13.405, 50)
+	if count != 2 {
+		t.Errorf("expected 2 stations in radius, got %d", count)
+	}
+}
+
+func TestCountStationsInRadius_SkipsNilLatLong(t *testing.T) {
+	lat := 52.52
+	setupGlobalState(t,
+		[]*Station{
+			{ID: "STN001", Name: "No coords", Latitude: nil, Longitude: nil},
+			{ID: "STN002", Name: "Partial", Latitude: &lat, Longitude: nil},
+		},
+		map[string]*StationInventory{},
+	)
+
+	count := countStationsInRadius(52.52, 13.405, 100)
+	if count != 0 {
+		t.Errorf("expected 0 stations (nil coords), got %d", count)
+	}
+}
+
+// ─── stationsHandler Error Message Tests ───────────────────────────────────────
+
+func TestStationsHandler_NoStationsInArea_ReturnsAreaMessage(t *testing.T) {
+	setupGlobalState(t, []*Station{}, map[string]*StationInventory{})
+
+	req := httptest.NewRequest(http.MethodGet, "/stations?lat=52.52&long=13.405&radius=10&limit=10&start=1950&end=2020", nil)
+	rec := httptest.NewRecorder()
+
+	stationsHandler(rec, req)
+
+	var resp Response
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.ErrorMsg == "" {
+		t.Error("expected error message when no stations found")
+	}
+	expected := "No stations found in this area. Try increasing the radius."
+	if resp.ErrorMsg != expected {
+		t.Errorf("expected %q, got %q", expected, resp.ErrorMsg)
+	}
+}
+
+func TestStationsHandler_StationsExistButNoDataInRange_ReturnsYearMessage(t *testing.T) {
+	lat, long := 52.52, 13.405
+	setupGlobalState(t,
+		[]*Station{
+			{ID: "STN001", Name: "Berlin", Latitude: &lat, Longitude: &long},
+		},
+		map[string]*StationInventory{
+			// Station data only covers 1900-1950, not the requested 2000-2020
+			"STN001": {FirstYear: 1900, LastYear: 1950},
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/stations?lat=52.52&long=13.405&radius=100&limit=10&start=2000&end=2020", nil)
+	rec := httptest.NewRecorder()
+
+	stationsHandler(rec, req)
+
+	var resp Response
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.ErrorMsg == "" {
+		t.Error("expected error message about year range")
+	}
+	// Should mention stations exist but no data in range
+	if resp.ErrorMsg == "No stations found in this area. Try increasing the radius." {
+		t.Error("should NOT show area message when stations exist geographically")
+	}
+	// Check it contains relevant info
+	if !contains(resp.ErrorMsg, "2000") || !contains(resp.ErrorMsg, "2020") {
+		t.Errorf("expected message to mention year range, got %q", resp.ErrorMsg)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

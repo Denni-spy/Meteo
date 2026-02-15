@@ -92,14 +92,13 @@ form.addEventListener('submit', function (event) {
         .then(response => response.json())
         .then(result => {
             if (result.errorMessage) {
-                alert("Server Response: " + result.errorMessage);
+                alert(result.errorMessage);
                 return;
             }
 
             const stationen = result.data;
 
             if (!stationen || stationen.length === 0) {
-                alert("No stations found in this area.");
                 return;
             }
 
