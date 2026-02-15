@@ -1,6 +1,8 @@
 const urlParams = new URLSearchParams(window.location.search);
 const id = urlParams.get('id');
 const stationName = urlParams.get('name');
+const startYear = urlParams.get('start') ? parseInt(urlParams.get('start')) : null;
+const endYear = urlParams.get('end') ? parseInt(urlParams.get('end')) : null;
 const url = `/api/station?id=${id}`;
 const spinner = document.getElementById('loading-spinner');
 
@@ -75,6 +77,16 @@ function fillSeasonalGaps(seasonalData, minYear, maxYear) {
     return filled;
 }
 
+// Filter data to only include years within the user-specified range.
+function filterByYearRange(data, start, end) {
+    if (!data) return data;
+    return data.filter(row => {
+        if (start !== null && row.year < start) return false;
+        if (end !== null && row.year > end) return false;
+        return true;
+    });
+}
+
 console.log("Send request to:", url);
 spinner.style.display = 'block';
 
@@ -87,10 +99,14 @@ fetch(url)
             return;
         }
 
-        const annualData = fillGaps(result.data.annual);
-        const minYear = annualData.length > 0 ? annualData[0].year : 0;
-        const maxYear = annualData.length > 0 ? annualData[annualData.length - 1].year : 0;
-        const seasonalData = fillSeasonalGaps(result.data.seasonal, minYear, maxYear);
+        const annualDataFull = fillGaps(result.data.annual);
+        const minYear = annualDataFull.length > 0 ? annualDataFull[0].year : 0;
+        const maxYear = annualDataFull.length > 0 ? annualDataFull[annualDataFull.length - 1].year : 0;
+        const seasonalDataFull = fillSeasonalGaps(result.data.seasonal, minYear, maxYear);
+
+        // Filter to user-specified year range
+        const annualData = filterByYearRange(annualDataFull, startYear, endYear);
+        const seasonalData = filterByYearRange(seasonalDataFull, startYear, endYear);
 
         cachedAnnualData = annualData;
         draw(annualData);

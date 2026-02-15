@@ -11,6 +11,7 @@
     --line-color: #2756A3;
     --input-bg: #ffffff;
     --input-text: #1e293b;
+    --label-color: #475569;
     --table-border: #000000;
     --tmin-color: blue;
     --tmax-color: red;
@@ -30,6 +31,7 @@
     --line-color: #3b6fd4;
     --input-bg: #1e293b;
     --input-text: #e2e8f0;
+    --label-color: #94a3b8;
     --table-border: #475569;
     --tmin-color: #60a5fa;
     --tmax-color: #f87171;
@@ -159,18 +161,28 @@ header {
 
 .field label {
     display: block;
-    font-weight: 600;
-    font-size: 0.85rem;
+    font-weight: 500;
+    font-size: 0.8rem;
+    color: var(--label-color);
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
 }
 
 input[type="number"] {
-    padding: 8px 10px;
+    padding: 8px 12px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 8px;
     width: 100%;
     background-color: var(--input-bg);
     color: var(--input-text);
     font-size: 0.9rem;
+    font-family: inherit;
+    outline: none;
+}
+
+input[type="number"]:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 }
 
 .search-btn {
@@ -178,10 +190,13 @@ input[type="number"] {
     color: white;
     padding: 10px 16px;
     border: none;
-    border-radius: 6px;
-    font-weight: bold;
+    border-radius: 8px;
+    font-weight: 600;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     transition: background 0.3s ease;
 }
 
@@ -342,8 +357,11 @@ input[type="number"] {
 }
 
 .dark-mode-toggle-wrapper span {
-    color: var(--text-color);
-    font-size: 0.85rem;
+    color: var(--label-color);
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
     white-space: nowrap;
 }
 

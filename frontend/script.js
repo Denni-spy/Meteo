@@ -39,6 +39,11 @@ form.addEventListener('submit', function (event) {
         return;
     }
 
+    if (limit < 1 || limit > 10) {
+        alert("The selection must be between 1 and 10 stations.");
+        return;
+    }
+
     if (start < 1750 || start > 2025) {
         alert("Please enter a start year between 1750 and 2025.");
         return;
@@ -110,7 +115,7 @@ form.addEventListener('submit', function (event) {
                         `)
                         .on("mouseover", function () { this.openPopup(); })
                         .on("mouseout", function () { this.closePopup(); })
-                        .on("click", () => window.location.href = `detailview.html?id=${station.id}&name=${encodeURIComponent(station.name)}`);
+                        .on("click", () => window.location.href = `detailview.html?id=${station.id}&name=${encodeURIComponent(station.name)}&start=${start}&end=${end}`);
                     stationMarkers.push(marker);
                 }
             });
