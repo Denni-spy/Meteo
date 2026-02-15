@@ -6,6 +6,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -687,65 +689,498 @@ func TestStationHandler_SetsCORSHeaders(t *testing.T) {
 	}
 }
 
+// ─── Mock HTTP Server Helper ───────────────────────────────────────────────────
+
+// newMockS3Server creates a mock HTTP server that serves CSV data for station IDs.
+// The handler maps station IDs to CSV content.
+func newMockS3Server(csvByStation map[string]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// URL pattern: /{stationID}.csv
+		path := r.URL.Path
+		// Extract station ID from path like /USW00094728.csv
+		if len(path) > 5 && path[len(path)-4:] == ".csv" {
+			id := path[1 : len(path)-4]
+			if csv, ok := csvByStation[id]; ok {
+				w.Header().Set("Content-Type", "text/csv")
+				w.Write([]byte(csv))
+				return
+			}
+		}
+		http.NotFound(w, r)
+	}))
+}
+
+// setupCache resets the global cache for testing. Cleans up after test completes.
+func setupCache(t *testing.T) {
+	oldCache := cache
+	cache = &stationCache{entries: make(map[string]cacheEntry)}
+	t.Cleanup(func() {
+		cache = oldCache
+	})
+}
+
+// setupBaseURL overrides the global baseURL for testing. Cleans up after test completes.
+func setupBaseURL(t *testing.T, url string) {
+	oldURL := baseURL
+	baseURL = url
+	t.Cleanup(func() {
+		baseURL = oldURL
+	})
+}
+
 // ─── loadStationData Tests (with mock HTTP server) ─────────────────────────────
 
 func TestLoadStationData_ParsesCSVCorrectly(t *testing.T) {
-	// Mock NOAA S3 server
 	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
 "USW00094728","20200101","TMIN",50,"","","S","0700"
 "USW00094728","20200101","TMAX",120,"","","S","0700"
 "USW00094728","20200102","TMIN",30,"","","S","0700"
 "USW00094728","20200102","PRCP",5,"","","S","0700"
 `
+	server := newMockS3Server(map[string]string{"USW00094728": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "USW00094728")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have 3 entries (2 TMIN + 1 TMAX), PRCP filtered out
+	if len(result) != 3 {
+		t.Fatalf("expected 3 records (TMIN+TMAX only), got %d", len(result))
+	}
+
+	// Verify first record
+	if result[0].ElementType != "TMIN" || result[0].Value != 50 {
+		t.Errorf("first record: expected TMIN/50, got %s/%d", result[0].ElementType, result[0].Value)
+	}
+	if result[0].Date != time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC) {
+		t.Errorf("first record: wrong date: %v", result[0].Date)
+	}
+}
+
+func TestLoadStationData_FiltersTMINandTMAXOnly(t *testing.T) {
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",50,"","","S",""
+"STN001","20200101","TMAX",120,"","","S",""
+"STN001","20200101","PRCP",5,"","","S",""
+"STN001","20200101","SNOW",0,"","","S",""
+"STN001","20200101","SNWD",0,"","","S",""
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Errorf("expected 2 records (TMIN+TMAX), got %d", len(result))
+	}
+	for _, r := range result {
+		if r.ElementType != "TMIN" && r.ElementType != "TMAX" {
+			t.Errorf("unexpected element type: %s", r.ElementType)
+		}
+	}
+}
+
+func TestLoadStationData_Minus9999IsSkipped(t *testing.T) {
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+"STN001","20200102","TMIN",-9999,"","","S",""
+"STN001","20200103","TMAX",250,"","","S",""
+"STN001","20200104","TMAX",-9999,"","","S",""
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only 2 valid records (the two -9999 values should be filtered)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 records (-9999 filtered), got %d", len(result))
+	}
+	if result[0].Value != 100 {
+		t.Errorf("expected first value 100, got %d", result[0].Value)
+	}
+	if result[1].Value != 250 {
+		t.Errorf("expected second value 250, got %d", result[1].Value)
+	}
+}
+
+func TestLoadStationData_MalformedLines(t *testing.T) {
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+"STN001","baddate","TMIN",200,"","","S",""
+"STN001","20200103","TMIN",notanumber,"","","S",""
+"STN001","20200104","TMIN",300,"","","S",""
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// baddate and notanumber lines should be skipped gracefully
+	if len(result) != 2 {
+		t.Errorf("expected 2 valid records (malformed skipped), got %d", len(result))
+	}
+}
+
+func TestLoadStationData_ShortLines(t *testing.T) {
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+"STN001","20200102"
+"STN001","20200103","TMIN",200,"","","S",""
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Short line should be skipped (len < 4 columns)
+	if len(result) != 2 {
+		t.Errorf("expected 2 records (short line skipped), got %d", len(result))
+	}
+}
+
+func TestLoadStationData_HTTP404(t *testing.T) {
+	server := newMockS3Server(map[string]string{}) // no stations registered
+	defer server.Close()
+
+	_, err := loadStationData(server.URL, "NONEXISTENT")
+	if err == nil {
+		t.Fatal("expected error for 404, got nil")
+	}
+}
+
+func TestLoadStationData_NetworkError(t *testing.T) {
+	// Use an invalid URL that will fail to connect
+	_, err := loadStationData("http://127.0.0.1:1", "STN001")
+	if err == nil {
+		t.Fatal("expected network error, got nil")
+	}
+}
+
+func TestLoadStationData_EmptyCSV(t *testing.T) {
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 records for empty CSV body, got %d", len(result))
+	}
+}
+
+func TestLoadStationData_SkipsHeaderRow(t *testing.T) {
+	// The header row contains "ELEMENT" which is not "TMIN"/"TMAX",
+	// so it should be skipped by the reader.Read() call
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected 1 record, got %d", len(result))
+	}
+}
+
+func TestLoadStationData_MultipleYearsOfData(t *testing.T) {
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20180615","TMIN",150,"","","S",""
+"STN001","20180615","TMAX",300,"","","S",""
+"STN001","20190715","TMIN",180,"","","S",""
+"STN001","20190715","TMAX",320,"","","S",""
+"STN001","20200815","TMIN",200,"","","S",""
+"STN001","20200815","TMAX",350,"","","S",""
+`
+	server := newMockS3Server(map[string]string{"STN001": csvData})
+	defer server.Close()
+
+	result, err := loadStationData(server.URL, "STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 6 {
+		t.Errorf("expected 6 records, got %d", len(result))
+	}
+
+	// Verify the data feeds correctly into annual calculation
+	annual := calculateAnnualAvg(result)
+	if len(annual) != 3 {
+		t.Errorf("expected 3 years from loaded data, got %d", len(annual))
+	}
+}
+
+// ─── Cache Tests ───────────────────────────────────────────────────────────────
+
+func TestGetStationData_CacheMiss_FetchesAndCaches(t *testing.T) {
+	setupCache(t)
+
+	var fetchCount int32
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+"STN001","20200101","TMAX",250,"","","S",""
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetchCount, 1)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Write([]byte(csvData))
+	}))
+	defer server.Close()
+	setupBaseURL(t, server.URL)
+
+	// First call - cache miss, should fetch from server
+	data, err := getStationData("STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(data) != 2 {
+		t.Errorf("expected 2 records, got %d", len(data))
+	}
+	if atomic.LoadInt32(&fetchCount) != 1 {
+		t.Errorf("expected 1 fetch on cache miss, got %d", fetchCount)
+	}
+
+	// Verify entry is now in cache
+	cache.mu.RLock()
+	_, exists := cache.entries["STN001"]
+	cache.mu.RUnlock()
+	if !exists {
+		t.Error("expected cache entry after first fetch")
+	}
+}
+
+func TestGetStationData_CacheHit_NoSecondFetch(t *testing.T) {
+	setupCache(t)
+
+	var fetchCount int32
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetchCount, 1)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Write([]byte(csvData))
+	}))
+	defer server.Close()
+	setupBaseURL(t, server.URL)
+
+	// First call - fetches from server
+	_, err := getStationData("STN001")
+	if err != nil {
+		t.Fatalf("unexpected error on first call: %v", err)
+	}
+
+	// Second call - should use cache
+	data, err := getStationData("STN001")
+	if err != nil {
+		t.Fatalf("unexpected error on second call: %v", err)
+	}
+	if len(data) != 1 {
+		t.Errorf("expected 1 record from cache, got %d", len(data))
+	}
+	if atomic.LoadInt32(&fetchCount) != 1 {
+		t.Errorf("expected only 1 fetch (cache hit on second call), got %d", fetchCount)
+	}
+}
+
+func TestGetStationData_CacheExpired_Refetches(t *testing.T) {
+	setupCache(t)
+
+	var fetchCount int32
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetchCount, 1)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Write([]byte(csvData))
+	}))
+	defer server.Close()
+	setupBaseURL(t, server.URL)
+
+	// First fetch
+	_, err := getStationData("STN001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Manually expire the cache entry
+	cache.mu.Lock()
+	entry := cache.entries["STN001"]
+	cache.entries["STN001"] = cacheEntry{data: entry.data, fetchedAt: time.Now().Add(-2 * cacheTTL)}
+	cache.mu.Unlock()
+
+	// Second fetch should re-fetch from server because cache is expired
+	_, err = getStationData("STN001")
+	if err != nil {
+		t.Fatalf("unexpected error after expiry: %v", err)
+	}
+	if atomic.LoadInt32(&fetchCount) != 2 {
+		t.Errorf("expected 2 fetches (expired cache), got %d", fetchCount)
+	}
+}
+
+func TestGetStationData_FetchError_ReturnsError(t *testing.T) {
+	setupCache(t)
+	setupBaseURL(t, "http://127.0.0.1:1") // invalid, will fail to connect
+
+	_, err := getStationData("STN001")
+	if err == nil {
+		t.Fatal("expected error for network failure, got nil")
+	}
+}
+
+func TestCache_ConcurrentAccess(t *testing.T) {
+	setupCache(t)
+
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"STN001","20200101","TMIN",100,"","","S",""
+`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Write([]byte(csvData))
 	}))
 	defer server.Close()
+	setupBaseURL(t, server.URL)
 
-	// We can't easily inject the URL into loadStationData without refactoring,
-	// so we test with a direct integration approach using the mock server.
-	// Instead, test the parsing logic indirectly through the public functions
-	// that consume the raw data.
-	// For a proper unit test, we'd need to refactor loadStationData to accept a base URL.
+	// Spawn multiple goroutines calling getStationData concurrently
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("STN%03d", i%5) // 5 different station IDs
+			_, _ = getStationData(id)
+		}(i)
+	}
+	wg.Wait()
+	// If we get here without a panic/deadlock, concurrency is handled correctly
+}
 
-	// This test verifies the CSV parsing logic by testing what calculateAnnualAvg
-	// would do with correctly parsed data
+// ─── stationHandler Integration Tests (with mock server) ──────────────────────
+
+func TestStationHandler_ValidID_ReturnsAnnualAndSeasonal(t *testing.T) {
+	setupCache(t)
+
+	// Pre-populate cache with known data so stationHandler uses it via getStationData
 	rawData := []RawStationData{
-		{Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 50},
-		{Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMAX", Value: 120},
-		{Date: time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 30},
-		// PRCP should be filtered out by loadStationData
+		{Date: time.Date(2020, 1, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: -50},
+		{Date: time.Date(2020, 1, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMAX", Value: 30},
+		{Date: time.Date(2020, 7, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 180},
+		{Date: time.Date(2020, 7, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMAX", Value: 300},
+	}
+	cache.mu.Lock()
+	cache.entries["TESTSTATION"] = cacheEntry{data: rawData, fetchedAt: time.Now()}
+	cache.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/station?id=TESTSTATION", nil)
+	rec := httptest.NewRecorder()
+
+	stationHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
 
-	result := calculateAnnualAvg(rawData)
-	if len(result) != 1 {
-		t.Fatalf("expected 1 year, got %d", len(result))
+	var resp Response
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
-	// TMIN avg: (50+30)/2 = 40 -> /10 = 4.0
-	if !approxEqual(*result[0].TMin, 4.0, 0.01) {
-		t.Errorf("expected TMin ~4.0, got %f", *result[0].TMin)
+	if resp.ErrorMsg != "" {
+		t.Errorf("expected no error, got %q", resp.ErrorMsg)
 	}
-	// TMAX: 120 -> /10 = 12.0
-	if !approxEqual(*result[0].TMax, 12.0, 0.01) {
-		t.Errorf("expected TMax ~12.0, got %f", *result[0].TMax)
+
+	// Verify the data field contains annual and seasonal keys
+	dataMap, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
+	}
+	if _, ok := dataMap["annual"]; !ok {
+		t.Error("expected 'annual' key in response data")
+	}
+	if _, ok := dataMap["seasonal"]; !ok {
+		t.Error("expected 'seasonal' key in response data")
 	}
 }
 
-func TestLoadStationData_Minus9999IsSkipped(t *testing.T) {
-	// -9999 is the NOAA missing value sentinel. loadStationData skips it.
-	// We verify this by simulating what the output should look like
-	// (the sentinel should not be included in the raw data).
-	rawData := []RawStationData{
-		{Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},
-		// -9999 would be filtered by loadStationData, so not included here
+func TestStationHandler_FetchesViaCache(t *testing.T) {
+	setupCache(t)
+
+	var fetchCount int32
+	csvData := `"ID","DATE","ELEMENT","DATA_VALUE","M_FLAG","Q_FLAG","S_FLAG","OBS_TIME"
+"LIVE001","20200601","TMIN",180,"","","S",""
+"LIVE001","20200601","TMAX",300,"","","S",""
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetchCount, 1)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Write([]byte(csvData))
+	}))
+	defer server.Close()
+	setupBaseURL(t, server.URL)
+
+	// First request - should fetch from mock server
+	req := httptest.NewRequest(http.MethodGet, "/station?id=LIVE001", nil)
+	rec := httptest.NewRecorder()
+	stationHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
-	result := calculateAnnualAvg(rawData)
-	if len(result) != 1 {
-		t.Fatalf("expected 1 year, got %d", len(result))
+	if atomic.LoadInt32(&fetchCount) != 1 {
+		t.Errorf("expected 1 fetch, got %d", fetchCount)
 	}
-	if !approxEqual(*result[0].TMin, 10.0, 0.01) {
-		t.Errorf("expected TMin ~10.0, got %f", *result[0].TMin)
+
+	// Second request - should use cache
+	req2 := httptest.NewRequest(http.MethodGet, "/station?id=LIVE001", nil)
+	rec2 := httptest.NewRecorder()
+	stationHandler(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec2.Code)
+	}
+	if atomic.LoadInt32(&fetchCount) != 1 {
+		t.Errorf("expected still 1 fetch (cache hit), got %d", fetchCount)
+	}
+}
+
+func TestStationHandler_FetchError_Returns500(t *testing.T) {
+	setupCache(t)
+	setupBaseURL(t, "http://127.0.0.1:1") // will fail
+
+	req := httptest.NewRequest(http.MethodGet, "/station?id=FAILSTN", nil)
+	rec := httptest.NewRecorder()
+	stationHandler(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+
+	var resp Response
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.ErrorMsg == "" {
+		t.Error("expected error message for fetch failure")
 	}
 }
 
@@ -916,5 +1351,33 @@ func TestCalculateSeasonalAvg_DecemberIsWinter(t *testing.T) {
 	// December 2020 should be attributed to year 2020 (current code behavior)
 	if result[0].Year != 2020 {
 		t.Errorf("expected year 2020, got %d", result[0].Year)
+	}
+}
+
+func TestFindStations_EqualDistanceSorting(t *testing.T) {
+	// Two stations at the exact same coordinates -> distance == 0 for both
+	lat, long := 52.52, 13.405
+	setupGlobalState(t,
+		[]*Station{
+			{ID: "STN_B", Name: "Station B", Latitude: &lat, Longitude: &long},
+			{ID: "STN_A", Name: "Station A", Latitude: &lat, Longitude: &long},
+		},
+		map[string]*StationInventory{
+			"STN_B": {FirstYear: 1900, LastYear: 2023},
+			"STN_A": {FirstYear: 1900, LastYear: 2023},
+		},
+	)
+
+	result, err := findStations(52.52, 13.405, 100, 10, 1950, 2020)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 stations, got %d", len(result))
+	}
+	// Both distances should be 0
+	if result[0].Distance != 0 || result[1].Distance != 0 {
+		t.Errorf("expected both distances to be 0, got %.4f and %.4f",
+			result[0].Distance, result[1].Distance)
 	}
 }

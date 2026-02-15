@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -60,6 +61,49 @@ type StationInventory struct {
 
 var inventoryMap = make(map[string]*StationInventory)
 var allStations []*Station
+
+// ─── Station Data Cache ────────────────────────────────────────────────────────
+
+const (
+	cacheTTL = 1 * time.Hour
+)
+
+var baseURL = "https://noaa-ghcn-pds.s3.amazonaws.com/csv/by_station"
+
+type cacheEntry struct {
+	data      []RawStationData
+	fetchedAt time.Time
+}
+
+type stationCache struct {
+	mu      sync.RWMutex
+	entries map[string]cacheEntry
+}
+
+var cache = &stationCache{entries: make(map[string]cacheEntry)}
+
+// getStationData returns station data from cache if available and not expired,
+// otherwise fetches from S3 and caches the result.
+func getStationData(id string) ([]RawStationData, error) {
+	cache.mu.RLock()
+	entry, exists := cache.entries[id]
+	cache.mu.RUnlock()
+
+	if exists && time.Since(entry.fetchedAt) < cacheTTL {
+		return entry.data, nil
+	}
+
+	data, err := loadStationData(baseURL, id)
+	if err != nil {
+		return nil, err
+	}
+
+	cache.mu.Lock()
+	cache.entries[id] = cacheEntry{data: data, fetchedAt: time.Now()}
+	cache.mu.Unlock()
+
+	return data, nil
+}
 
 // loading the inventory file on start up
 func loadInventory() error {
@@ -320,8 +364,8 @@ func stationsHandler(w http.ResponseWriter, r *http.Request) {
 	enc.Encode(response)
 }
 
-func loadStationData(id string) ([]RawStationData, error) {
-	url := fmt.Sprintf("https://noaa-ghcn-pds.s3.amazonaws.com/csv/by_station/%s.csv", id)
+func loadStationData(baseURL string, id string) ([]RawStationData, error) {
+	url := fmt.Sprintf("%s/%s.csv", baseURL, id)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -440,8 +484,6 @@ func calculateSeasonalAvg(rawData []RawStationData) []*SeasonalStationData {
 				year = year + 1  */
 		case time.January, time.February, time.December:
 			season = "Winter"
-		default:
-			continue
 		}
 
 		key := fmt.Sprintf("%d-%s", year, season)
@@ -503,7 +545,7 @@ func stationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawData, err := loadStationData(id)
+	rawData, err := getStationData(id)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		response := Response{Data: nil, ErrorMsg: err.Error()}

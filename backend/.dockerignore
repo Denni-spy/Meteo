@@ -1,0 +1,6 @@
+*_test.go
+coverage.*
+.git
+.gitignore
+.idea
+.vscode
