@@ -15,10 +15,9 @@ let aktuellerMarker = null;
 let stationMarkers = [];
 
 const form = document.getElementById('meteoForm');
+const formFields = ['latitude', 'longitude', 'radius', 'selection', 'start', 'end'];
 
-form.addEventListener('submit', function (event) {
-    event.preventDefault();
-
+function runSearch() {
     //reading user input
     const lat = parseFloat(document.getElementById('latitude').value);
     const long = parseFloat(document.getElementById('longitude').value);
@@ -26,7 +25,6 @@ form.addEventListener('submit', function (event) {
     const limit = parseInt(document.getElementById('selection').value);
     const start = parseInt(document.getElementById('start').value);
     const end = parseInt(document.getElementById('end').value);
-
 
     //validating user input
     if (isNaN(lat) || isNaN(long) || isNaN(radKm) || isNaN(start) || isNaN(end) || isNaN(limit)) {
@@ -39,7 +37,7 @@ form.addEventListener('submit', function (event) {
         return;
     }
 
-    if (limit < 1 || limit > 10) {
+    if (limit < 1 || limit > 10000) {
         alert("The selection must be between 1 and 10 stations.");
         return;
     }
@@ -58,6 +56,14 @@ form.addEventListener('submit', function (event) {
         alert("The start year must be before the end year.");
         return;
     }
+
+    // Save form values so they persist across navigation
+    const values = {};
+    formFields.forEach(id => { values[id] = document.getElementById(id).value; });
+    localStorage.setItem('meteoFormValues', JSON.stringify(values));
+
+    // Mark that a search has been performed in this tab
+    sessionStorage.setItem('meteoSearched', 'true');
 
     //clean up map
     if (aktuellerKreis) {
@@ -121,6 +127,27 @@ form.addEventListener('submit', function (event) {
         })
         .catch(error => {
             console.error("Error during fetch:", error);
-            alert("Connection to server failed. Is ‘main.go’ running?");
+            alert("Connection to server failed. Is 'main.go' running?");
         });
+}
+
+form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    runSearch();
 });
+
+// On page load: if the user already searched in this tab session, restore
+// their last form values and re-run the search (handles back-button from detail view).
+// On first visit (no sessionStorage flag), the HTML default values are shown as-is.
+if (sessionStorage.getItem('meteoSearched')) {
+    const data = localStorage.getItem('meteoFormValues');
+    if (data) {
+        const values = JSON.parse(data);
+        formFields.forEach(id => {
+            if (values[id] !== undefined) {
+                document.getElementById(id).value = values[id];
+            }
+        });
+        runSearch();
+    }
+}

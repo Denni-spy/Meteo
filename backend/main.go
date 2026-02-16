@@ -62,8 +62,7 @@ type StationInventory struct {
 var inventoryMap = make(map[string]*StationInventory)
 var allStations []*Station
 
-// ─── Station Data Cache ────────────────────────────────────────────────────────
-
+// station data cache
 const (
 	cacheTTL = 1 * time.Hour
 )
@@ -393,7 +392,7 @@ func stationsHandler(w http.ResponseWriter, r *http.Request) {
 
 	stationList, _ := findStations(lat, long, radius, limit, start, end)
 
-	// If no stations matched, check if there are stations in the radius at all
+	// if no stations matched, check if there are stations in the radius at all
 	// to give the user a more helpful error message.
 	errMsg := ""
 	if len(stationList) == 0 {
@@ -526,7 +525,7 @@ func calculateSeasonalAvg(rawData []RawStationData) []*SeasonalStationData {
 			season = "Autumn"
 			/*	case time.December:
 				season = "Winter"
-				year = year + 1  */
+				year = year + 1  */ //would be needed for continous winter calculation -> Problem: it would display data even if a year has data gaps
 		case time.January, time.February, time.December:
 			season = "Winter"
 		}
