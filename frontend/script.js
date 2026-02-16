@@ -37,7 +37,7 @@ function runSearch() {
         return;
     }
 
-    if (limit < 1 || limit > 10000) {
+    if (limit < 1 || limit > 10) {
         alert("The selection must be between 1 and 10 stations.");
         return;
     }
