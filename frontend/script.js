@@ -32,6 +32,16 @@ function runSearch() {
         return;
     }
 
+    if (lat < -90 || lat > 90) {
+        alert("Latitude must be between -90 and 90 degrees.");
+        return;
+    }
+
+    if (long < -180 || long > 180) {
+        alert("Longitude must be between -180 and 180 degrees.");
+        return;
+    }
+
     if (radKm <= 0 || radKm > 100) {
         alert("The radius must be between 1 and 100 km.");
         return;
