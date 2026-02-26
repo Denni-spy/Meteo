@@ -133,16 +133,16 @@ func TestCalculateAnnualAvg_DividesByTen(t *testing.T) {
 	}
 }
 
-func TestCalculateAnnualAvg_RoundsToTwoDecimals(t *testing.T) {
+func TestCalculateAnnualAvg_RoundsToOneDecimal(t *testing.T) {
 	raw := []RawStationData{
 		{Date: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},
 		{Date: time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 200},
 		{Date: time.Date(2020, 1, 3, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 103},
 	}
 	result := calculateAnnualAvg(raw)
-	// avg = (100+200+103)/3 = 134.333... -> /10 = 13.4333... -> rounded = 13.43
-	if !approxEqual(*result[0].TMin, 13.43, 0.001) {
-		t.Errorf("expected TMin ~13.43 (rounded to 2 decimals), got %f", *result[0].TMin)
+	// avg = (100+200+103)/3 = 134.333... -> /10 = 13.4333... -> rounded = 13.4
+	if !approxEqual(*result[0].TMin, 13.4, 0.001) {
+		t.Errorf("expected TMin ~13.4 (rounded to 1 decimal), got %f", *result[0].TMin)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestCalculateAnnualAvg_NegativeValues(t *testing.T) {
 // ─── calculateSeasonalAvg Tests ────────────────────────────────────────────────
 
 func TestCalculateSeasonalAvg_EmptyInput(t *testing.T) {
-	result := calculateSeasonalAvg(nil)
+	result := calculateSeasonalAvg(nil, false)
 	if len(result) != 0 {
 		t.Errorf("expected empty result for nil input, got %d", len(result))
 	}
@@ -192,7 +192,7 @@ func TestCalculateSeasonalAvg_CorrectSeasonAssignment(t *testing.T) {
 			raw := []RawStationData{
 				{Date: time.Date(2020, tc.month, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},
 			}
-			result := calculateSeasonalAvg(raw)
+			result := calculateSeasonalAvg(raw, false)
 			if len(result) != 1 {
 				t.Fatalf("expected 1 result, got %d", len(result))
 			}
@@ -210,7 +210,7 @@ func TestCalculateSeasonalAvg_AggregatesWithinSeason(t *testing.T) {
 		{Date: time.Date(2020, 7, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 250},
 		{Date: time.Date(2020, 8, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 300},
 	}
-	result := calculateSeasonalAvg(raw)
+	result := calculateSeasonalAvg(raw, false)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 seasonal result, got %d", len(result))
 	}
@@ -231,7 +231,7 @@ func TestCalculateSeasonalAvg_SortOrder(t *testing.T) {
 		{Date: time.Date(2020, 10, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100}, // Autumn
 		{Date: time.Date(2020, 4, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},  // Spring
 	}
-	result := calculateSeasonalAvg(raw)
+	result := calculateSeasonalAvg(raw, false)
 	if len(result) != 4 {
 		t.Fatalf("expected 4 results, got %d", len(result))
 	}
@@ -249,7 +249,7 @@ func TestCalculateSeasonalAvg_MultipleYears_SortedByYearThenSeason(t *testing.T)
 		{Date: time.Date(2020, 1, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100}, // Winter 2020
 		{Date: time.Date(2020, 7, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100}, // Summer 2020
 	}
-	result := calculateSeasonalAvg(raw)
+	result := calculateSeasonalAvg(raw, false)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(result))
 	}
@@ -270,7 +270,7 @@ func TestCalculateSeasonalAvg_TMinAndTMaxBothPresent(t *testing.T) {
 		{Date: time.Date(2020, 7, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 200},
 		{Date: time.Date(2020, 7, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMAX", Value: 350},
 	}
-	result := calculateSeasonalAvg(raw)
+	result := calculateSeasonalAvg(raw, false)
 	if len(result) != 1 {
 		t.Fatalf("expected 1, got %d", len(result))
 	}
@@ -289,7 +289,7 @@ func TestCalculateSeasonalAvg_NilPointersWhenMissing(t *testing.T) {
 	raw := []RawStationData{
 		{Date: time.Date(2020, 7, 1, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 200},
 	}
-	result := calculateSeasonalAvg(raw)
+	result := calculateSeasonalAvg(raw, false)
 	if result[0].TMin == nil {
 		t.Error("expected TMin non-nil")
 	}
@@ -1341,7 +1341,7 @@ func TestCalculateSeasonalAvg_DecemberIsWinter(t *testing.T) {
 	raw := []RawStationData{
 		{Date: time.Date(2020, 12, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: -50},
 	}
-	result := calculateSeasonalAvg(raw)
+	result := calculateSeasonalAvg(raw, false)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(result))
 	}
@@ -1351,6 +1351,144 @@ func TestCalculateSeasonalAvg_DecemberIsWinter(t *testing.T) {
 	// December 2020 should be attributed to year 2020 (current code behavior)
 	if result[0].Year != 2020 {
 		t.Errorf("expected year 2020, got %d", result[0].Year)
+	}
+}
+
+// ─── Southern Hemisphere Season Tests ──────────────────────────────────────────
+
+func TestCalculateSeasonalAvg_SouthernHemisphere_CorrectSeasonAssignment(t *testing.T) {
+	months := []struct {
+		month  time.Month
+		season string
+	}{
+		{time.January, "Summer"},
+		{time.February, "Summer"},
+		{time.March, "Autumn"},
+		{time.April, "Autumn"},
+		{time.May, "Autumn"},
+		{time.June, "Winter"},
+		{time.July, "Winter"},
+		{time.August, "Winter"},
+		{time.September, "Spring"},
+		{time.October, "Spring"},
+		{time.November, "Spring"},
+		{time.December, "Summer"},
+	}
+
+	for _, tc := range months {
+		t.Run(tc.month.String(), func(t *testing.T) {
+			raw := []RawStationData{
+				{Date: time.Date(2020, tc.month, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},
+			}
+			result := calculateSeasonalAvg(raw, true)
+			if len(result) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(result))
+			}
+			if result[0].Season != tc.season {
+				t.Errorf("month %s: expected season %q, got %q", tc.month, tc.season, result[0].Season)
+			}
+		})
+	}
+}
+
+func TestCalculateSeasonalAvg_SouthernHemisphere_DecemberIsSummer(t *testing.T) {
+	raw := []RawStationData{
+		{Date: time.Date(2020, 12, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 250},
+	}
+	result := calculateSeasonalAvg(raw, true)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+	if result[0].Season != "Summer" {
+		t.Errorf("expected December to be Summer in southern hemisphere, got %s", result[0].Season)
+	}
+	if result[0].Year != 2020 {
+		t.Errorf("expected year 2020, got %d", result[0].Year)
+	}
+}
+
+func TestCalculateSeasonalAvg_SouthernHemisphere_JulyIsWinter(t *testing.T) {
+	raw := []RawStationData{
+		{Date: time.Date(2020, 6, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 50},
+		{Date: time.Date(2020, 7, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 80},
+		{Date: time.Date(2020, 8, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 60},
+	}
+	result := calculateSeasonalAvg(raw, true)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+	if result[0].Season != "Winter" {
+		t.Errorf("expected Jun/Jul/Aug to be Winter in southern hemisphere, got %s", result[0].Season)
+	}
+	// avg = (50+80+60)/3 = 63.33 -> /10 = 6.33 -> rounded = 6.3
+	if !approxEqual(*result[0].TMin, 6.3, 0.01) {
+		t.Errorf("expected TMin ~6.3, got %f", *result[0].TMin)
+	}
+}
+
+func TestCalculateSeasonalAvg_SouthernHemisphere_SortOrder(t *testing.T) {
+	raw := []RawStationData{
+		{Date: time.Date(2020, 10, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100}, // Spring (SH)
+		{Date: time.Date(2020, 7, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},  // Winter (SH)
+		{Date: time.Date(2020, 1, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},  // Summer (SH)
+		{Date: time.Date(2020, 4, 15, 0, 0, 0, 0, time.UTC), ElementType: "TMIN", Value: 100},  // Autumn (SH)
+	}
+	result := calculateSeasonalAvg(raw, true)
+	if len(result) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(result))
+	}
+	expectedOrder := []string{"Winter", "Spring", "Summer", "Autumn"}
+	for i, expected := range expectedOrder {
+		if result[i].Season != expected {
+			t.Errorf("position %d: expected %s, got %s", i, expected, result[i].Season)
+		}
+	}
+}
+
+func TestIsSouthernHemisphere(t *testing.T) {
+	tests := []struct {
+		lat      float64
+		expected bool
+	}{
+		{52.52, false}, // Berlin
+		{-33.87, true}, // Sydney
+		{0.0, false},   // Equator
+		{-0.01, true},  // Just south of equator
+		{90.0, false},  // North Pole
+		{-90.0, true},  // South Pole
+	}
+	for _, tc := range tests {
+		result := isSouthernHemisphere(tc.lat)
+		if result != tc.expected {
+			t.Errorf("lat %.2f: expected %v, got %v", tc.lat, tc.expected, result)
+		}
+	}
+}
+
+func TestFindStationByID(t *testing.T) {
+	lat1, long1 := 52.52, 13.405
+	lat2, long2 := -33.87, 151.21
+	oldStations := allStations
+	defer func() { allStations = oldStations }()
+
+	allStations = []*Station{
+		{ID: "BERLIN01", Name: "Berlin", Latitude: &lat1, Longitude: &long1},
+		{ID: "SYDNEY01", Name: "Sydney", Latitude: &lat2, Longitude: &long2},
+	}
+
+	// Test found
+	s := findStationByID("SYDNEY01")
+	if s == nil {
+		t.Fatal("expected to find SYDNEY01")
+	}
+	if s.Name != "Sydney" {
+		t.Errorf("expected Sydney, got %s", s.Name)
+	}
+
+	// Test not found
+	s = findStationByID("UNKNOWN")
+	if s != nil {
+		t.Errorf("expected nil for unknown station, got %v", s)
 	}
 }
 

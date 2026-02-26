@@ -489,12 +489,12 @@ func calculateAnnualAvg(rawData []RawStationData) []*AnnualStationData {
 		sData := &AnnualStationData{Year: year}
 		if val.countMin > 0 {
 			avg := (float64(val.sumMin) / float64(val.countMin)) / 10
-			avg = math.Round(avg*100) / 100
+			avg = math.Round(avg*10) / 10
 			sData.TMin = &avg
 		}
 		if val.countMax > 0 {
 			avg := (float64(val.sumMax) / float64(val.countMax)) / 10
-			avg = math.Round(avg*100) / 100
+			avg = math.Round(avg*10) / 10
 			sData.TMax = &avg
 		}
 		result = append(result, sData)
@@ -503,8 +503,23 @@ func calculateAnnualAvg(rawData []RawStationData) []*AnnualStationData {
 	return result
 }
 
+// findStationByID looks up a station's data from the global allStations slice.
+func findStationByID(id string) *Station {
+	for _, s := range allStations {
+		if s.ID == id {
+			return s
+		}
+	}
+	return nil
+}
+
+// isSouthernHemisphere returns true if the given latitude is below the equator.
+func isSouthernHemisphere(lat float64) bool {
+	return lat < 0
+}
+
 // defining seasons and calculating seasonal average
-func calculateSeasonalAvg(rawData []RawStationData) []*SeasonalStationData {
+func calculateSeasonalAvg(rawData []RawStationData, southernHemisphere bool) []*SeasonalStationData {
 	type Aggr struct {
 		sumMin, countMin int
 		sumMax, countMax int
@@ -516,18 +531,28 @@ func calculateSeasonalAvg(rawData []RawStationData) []*SeasonalStationData {
 		year := d.Date.Year()
 		var season string
 
-		switch month {
-		case time.March, time.April, time.May:
-			season = "Spring"
-		case time.June, time.July, time.August:
-			season = "Summer"
-		case time.September, time.October, time.November:
-			season = "Autumn"
-			/*	case time.December:
+		if southernHemisphere {
+			switch month {
+			case time.March, time.April, time.May:
+				season = "Autumn"
+			case time.June, time.July, time.August:
 				season = "Winter"
-				year = year + 1  */ //would be needed for continous winter calculation -> Problem: it would display data even if a year has data gaps
-		case time.January, time.February, time.December:
-			season = "Winter"
+			case time.September, time.October, time.November:
+				season = "Spring"
+			case time.January, time.February, time.December:
+				season = "Summer"
+			}
+		} else {
+			switch month {
+			case time.March, time.April, time.May:
+				season = "Spring"
+			case time.June, time.July, time.August:
+				season = "Summer"
+			case time.September, time.October, time.November:
+				season = "Autumn"
+			case time.January, time.February, time.December:
+				season = "Winter"
+			}
 		}
 
 		key := fmt.Sprintf("%d-%s", year, season)
@@ -553,12 +578,12 @@ func calculateSeasonalAvg(rawData []RawStationData) []*SeasonalStationData {
 
 		if val.countMin > 0 {
 			avg := (float64(val.sumMin) / float64(val.countMin)) / 10.0
-			avg = math.Round(avg*100) / 100
+			avg = math.Round(avg*10) / 10
 			sData.TMin = &avg
 		}
 		if val.countMax > 0 {
 			avg := (float64(val.sumMax) / float64(val.countMax)) / 10.0
-			avg = math.Round(avg*100) / 100
+			avg = math.Round(avg*10) / 10
 			sData.TMax = &avg
 		}
 		result = append(result, sData)
@@ -598,7 +623,13 @@ func stationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	annualData := calculateAnnualAvg(rawData)
-	seasonalData := calculateSeasonalAvg(rawData)
+
+	// Determine hemisphere from station latitude for correct season mapping
+	southern := false
+	if station := findStationByID(id); station != nil && station.Latitude != nil {
+		southern = isSouthernHemisphere(*station.Latitude)
+	}
+	seasonalData := calculateSeasonalAvg(rawData, southern)
 
 	detailData := StationDetailResponse{
 		Annual:   annualData,
